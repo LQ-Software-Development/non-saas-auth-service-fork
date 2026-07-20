@@ -23,7 +23,9 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
     JwtModule.register({
       global: true,
       secret: process.env.JWT_SECRET,
-      signOptions: { expiresIn: '90d' },
+      signOptions: {
+        expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
+      },
     }),
     EventEmitterModule.forRoot(),
     DatabaseModule,

@@ -32,6 +32,10 @@ import {
 } from 'src/organizations/entities/organization.schema';
 import { AuthController } from './auth.controller';
 import { RefreshTokenInfoService } from './services/refresh-token-info.service';
+import {
+  JWT_ACCESS_EXPIRES_IN,
+  RefreshTokenService,
+} from './services/refresh-token.service';
 import { ResendEmailVerificationService } from './services/resend-email-verification.service';
 import { AuthV2Controller } from './auth-v2.controller';
 import { LoginWithoutMetadataService } from './services/login-without-metadata.service';
@@ -73,6 +77,7 @@ import { LoginWithoutMetadataService } from './services/login-without-metadata.s
     VerifyUserEmailUseCase,
     ResendEmailVerificationService,
     RefreshTokenInfoService,
+    RefreshTokenService,
     LoginWithoutMetadataService,
     {
       provide: 'user-repository',
@@ -83,7 +88,7 @@ import { LoginWithoutMetadataService } from './services/login-without-metadata.s
       useFactory: () => {
         return new JwtService({
           secret: process.env.JWT_SECRET,
-          signOptions: { expiresIn: '90d' },
+          signOptions: { expiresIn: JWT_ACCESS_EXPIRES_IN },
         });
       },
     },

@@ -49,6 +49,9 @@ export class LoginResponseDto {
   @ApiProperty({ description: 'Token JWT de acesso' })
   token: string;
 
+  @ApiProperty({ description: 'Opaque refresh token (90d, rotated on use)' })
+  refreshToken: string;
+
   @ApiProperty({ description: 'ID do usuário logado' })
   userId: string;
 

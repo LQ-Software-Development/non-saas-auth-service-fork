@@ -1,33 +1,55 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsString } from 'class-validator';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from '../database/providers/schema/user.schema';
-import { Organization } from 'src/organizations/entities/organization.schema';
-import { Participant } from 'src/organizations/participants/entities/participant.entity';
+import { Organization } from '../../organizations/entities/organization.schema';
+import { Participant } from '../../organizations/participants/entities/participant.entity';
+import {
+  JWT_ACCESS_EXPIRES_IN,
+  RefreshTokenService,
+} from './refresh-token.service';
+
+export class RefreshTokenDto {
+  @ApiProperty({ description: 'Opaque refresh token' })
+  @IsNotEmpty()
+  @IsString()
+  refreshToken: string;
+}
 
 @Injectable()
 export class RefreshTokenInfoService {
   constructor(
-    private readonly jwtService: JwtService,
+    @Inject('jwt-service') private readonly jwtService: JwtService,
     @InjectModel(User.name)
     private readonly userModel: Model<User>,
     @InjectModel(Organization.name)
     private readonly organizationModel: Model<Organization>,
     @InjectModel(Participant.name)
     private readonly participantModel: Model<Participant>,
-  ) { }
+    private readonly refreshTokenService: RefreshTokenService,
+  ) {}
 
-  async execute(userId: string, withMetadata = true) {
-    const whereClauseOrganizationRelations = [];
+  async execute(
+    refreshToken: string,
+    withMetadata = true,
+  ) {
+    const userId =
+      await this.refreshTokenService.findUserIdByRefreshToken(refreshToken);
 
     const user = await this.userModel.findById(userId);
-
-    console.log(user);
-
     if (!user) {
-      throw new ForbiddenException('User or password incorrect');
+      throw new UnauthorizedException('Invalid refresh token');
     }
+
+    const newRefreshToken = await this.refreshTokenService.rotateRefreshToken(
+      userId,
+      refreshToken,
+    );
+
+    const whereClauseOrganizationRelations: Record<string, string>[] = [];
 
     if (user.email) {
       whereClauseOrganizationRelations.push({ email: user.email });
@@ -35,16 +57,16 @@ export class RefreshTokenInfoService {
     if (user.document) {
       whereClauseOrganizationRelations.push({ document: user.document });
     }
-
     if (user.phone) {
       whereClauseOrganizationRelations.push({ phone: user.phone });
     }
 
-    const organizationRelations = await this.participantModel.find({
-      $or: whereClauseOrganizationRelations,
-    });
-
-    console.log(organizationRelations);
+    const organizationRelations =
+      whereClauseOrganizationRelations.length > 0
+        ? await this.participantModel.find({
+            $or: whereClauseOrganizationRelations,
+          })
+        : [];
 
     const organizationIds = organizationRelations.map(
       (relation) => relation.organizationId,
@@ -58,10 +80,8 @@ export class RefreshTokenInfoService {
 
     const organizationsWithRoles = organizations.map((organization) => {
       const relation = organizationRelations.find(
-        (relation) => relation.organizationId === organization.id,
+        (rel) => rel.organizationId === organization.id,
       );
-
-      console.log(relation);
 
       return {
         ...organization.toObject(),
@@ -72,21 +92,20 @@ export class RefreshTokenInfoService {
       };
     });
 
-    if (!user) {
-      throw new ForbiddenException('User or password incorrect');
-    }
-
-    const newToken = this.jwtService.sign({
-      sub: user.id,
-      accesses: organizationsWithRoles.map((org) => ({
-        ...org,
-        accessMetadata: withMetadata ? org.accessMetadata : undefined,
-        metadata: withMetadata ? org.metadata : undefined,
-      })),
-      name: user.name,
-      email: user.email,
-      verifiedEmail: user.verifiedEmail,
-    });
+    const newToken = this.jwtService.sign(
+      {
+        sub: user.id,
+        accesses: organizationsWithRoles.map((org) => ({
+          ...org,
+          accessMetadata: withMetadata ? org.accessMetadata : undefined,
+          metadata: withMetadata ? org.metadata : undefined,
+        })),
+        name: user.name,
+        email: user.email,
+        verifiedEmail: user.verifiedEmail,
+      },
+      { expiresIn: JWT_ACCESS_EXPIRES_IN },
+    );
 
     return {
       name: user.name,
@@ -96,6 +115,7 @@ export class RefreshTokenInfoService {
       phone: user.phone,
       document: user.document,
       token: newToken,
+      refreshToken: newRefreshToken,
       accesses: organizationsWithRoles,
     };
   }

@@ -9,6 +9,7 @@ import { Model, Types } from 'mongoose';
 import { LoginUserDto } from '../dto/login-user.dto';
 import * as bcrypt from 'bcrypt';
 import { ForbiddenException } from '@nestjs/common';
+import { RefreshTokenService } from './refresh-token.service';
 
 // Tipos Mock para Mongoose Model
 type MockModel<T = any> = Partial<Record<keyof Model<T>, jest.Mock>>;
@@ -67,6 +68,12 @@ describe('LoginUserService', () => {
         {
           provide: getModelToken(Organization.name),
           useValue: createMockModel<Organization>(),
+        },
+        {
+          provide: RefreshTokenService,
+          useValue: {
+            issueRefreshToken: jest.fn().mockResolvedValue('mock.refresh.token'),
+          },
         },
       ],
     }).compile();

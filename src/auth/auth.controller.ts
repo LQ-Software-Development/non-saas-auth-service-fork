@@ -1,5 +1,8 @@
 import { Body, Controller, Post, Put, Query, Request, UseGuards } from '@nestjs/common';
-import { RefreshTokenInfoService } from './services/refresh-token-info.service';
+import {
+  RefreshTokenDto,
+  RefreshTokenInfoService,
+} from './services/refresh-token-info.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import {
   ApiBadRequestResponse,
@@ -22,17 +25,22 @@ export class AuthController {
     private readonly refreshTokenInfoService: RefreshTokenInfoService,
     private readonly resendEmailVerificationService: ResendEmailVerificationService,
     private readonly loginUserService: LoginUserService,
-  ) { }
+  ) {}
 
-  @UseGuards(JwtAuthGuard)
   @Post('auth/refresh-token-info')
-  async refreshTokenInfo(@Request() req: any, @Query('withMetadata') withMetadata: string) {
-    return this.refreshTokenInfoService.execute(req.user.sub, withMetadata !== 'false');
+  async refreshTokenInfo(
+    @Body() body: RefreshTokenDto,
+    @Query('withMetadata') withMetadata: string,
+  ) {
+    return this.refreshTokenInfoService.execute(
+      body.refreshToken,
+      withMetadata !== 'false',
+    );
   }
 
   @UseGuards(JwtAuthGuard)
   @Put('auth/email-verification')
-  async resendEmailVerification(@Request() req: any) {
+  async resendEmailVerification(@Request() req: { user: { sub: string } }) {
     return this.resendEmailVerificationService.execute(req.user.sub);
   }
 
