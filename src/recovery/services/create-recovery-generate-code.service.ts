@@ -1,7 +1,6 @@
 import {
   Injectable,
   Inject,
-  NotFoundException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { randomInt } from 'crypto';
@@ -19,6 +18,9 @@ import {
 } from './otp-rate-limit.service';
 import { OtpDeliveryService } from './otp-delivery.service';
 
+const SOFT_SUCCESS_MESSAGE =
+  'Se existir uma conta com este e-mail, enviaremos um código de recuperação.';
+
 @Injectable()
 export class CreateRecoveryGenerateCodeService {
   constructor(
@@ -30,9 +32,11 @@ export class CreateRecoveryGenerateCodeService {
   ) {}
 
   async execute(createRecoveryDto: CreateRecoveryDto) {
+    const emailKey = createRecoveryDto.email.trim().toLowerCase();
     const user = await this.userRepository.findByEmail(createRecoveryDto.email);
     if (!user) {
-      throw new NotFoundException('Usuário não encontrado');
+      await this.rateLimit.assertGenerateAllowed(emailKey);
+      return { message: SOFT_SUCCESS_MESSAGE };
     }
 
     const throttleKey = resolveOtpThrottleKey(user);
@@ -59,5 +63,7 @@ export class CreateRecoveryGenerateCodeService {
         'Falha ao enviar código de recuperação de senha',
       );
     }
+
+    return { message: SOFT_SUCCESS_MESSAGE };
   }
 }

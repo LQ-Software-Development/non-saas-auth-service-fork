@@ -172,13 +172,14 @@ function createDefaultRedisClient(): RedisLike {
   const port = parseInt(process.env.REDIS_PORT || '6379', 10);
   const password = process.env.REDIS_PASSWORD || undefined;
 
+  // Eager connect so OTP throttle fails closed if Redis is down (no silent bypass).
   return new Redis({
     host,
     port,
     password: password || undefined,
-    lazyConnect: true,
     maxRetriesPerRequest: 1,
     enableOfflineQueue: false,
+    connectTimeout: 3000,
   });
 }
 

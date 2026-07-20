@@ -7,7 +7,10 @@ export class UpdateRecoveryDto {
     @IsEmail()
     email: string;
 
-    @ApiProperty()
+    @ApiProperty({
+      description:
+        'OTP code, or resetToken returned by validate-code after successful OTP validation',
+    })
     @IsNotEmpty()
     token: string;
 

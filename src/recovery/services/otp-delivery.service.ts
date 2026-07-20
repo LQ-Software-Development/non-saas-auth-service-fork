@@ -61,45 +61,61 @@ export class OtpDeliveryService {
     userPhone?: string | null,
     organizationId?: string,
   ): Promise<{ organizationId: string; phone: string } | null> {
-    const orgId =
-      organizationId?.trim() ||
-      (await this.resolveOrganizationId(userId));
+    const requestedOrg = organizationId?.trim();
+
+    if (requestedOrg) {
+      const membership = await this.participantModel
+        .findOne({
+          userId,
+          organizationId: requestedOrg,
+          $or: [{ deletedAt: { $exists: false } }, { deletedAt: null }],
+        })
+        .select('phone organizationId')
+        .lean()
+        .exec();
+
+      if (!membership) {
+        return null;
+      }
+
+      if (userPhone?.trim()) {
+        return { organizationId: requestedOrg, phone: userPhone.trim() };
+      }
+
+      if (membership.phone) {
+        return {
+          organizationId: String(membership.organizationId || requestedOrg),
+          phone: String(membership.phone),
+        };
+      }
+
+      return null;
+    }
 
     if (userPhone?.trim()) {
+      const orgId = await this.resolveOrganizationId(userId);
       if (!orgId) {
         return null;
       }
       return { organizationId: orgId, phone: userPhone.trim() };
     }
 
-    const query: Record<string, unknown> = {
-      userId,
-      phone: { $exists: true, $nin: [null, ''] },
-      $or: [{ deletedAt: { $exists: false } }, { deletedAt: null }],
-    };
-    if (organizationId?.trim()) {
-      query.organizationId = organizationId.trim();
-    }
-
     const participant = await this.participantModel
-      .findOne(query)
+      .findOne({
+        userId,
+        phone: { $exists: true, $nin: [null, ''] },
+        $or: [{ deletedAt: { $exists: false } }, { deletedAt: null }],
+      })
       .select('phone organizationId')
       .lean()
       .exec();
 
-    if (!participant?.phone) {
-      return null;
-    }
-
-    const resolvedOrg =
-      (participant.organizationId && String(participant.organizationId)) ||
-      orgId;
-    if (!resolvedOrg) {
+    if (!participant?.phone || !participant.organizationId) {
       return null;
     }
 
     return {
-      organizationId: resolvedOrg,
+      organizationId: String(participant.organizationId),
       phone: String(participant.phone),
     };
   }

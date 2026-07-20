@@ -35,8 +35,12 @@ describe('CreateRecoveryGenerateCodeService', () => {
     userRepository.update.mockResolvedValue({ isSuccess: true });
     otpDelivery.deliver.mockResolvedValue(true);
 
-    await service.execute({ email: 'a@b.com', organizationId: 'org1' });
+    const result = await service.execute({
+      email: 'a@b.com',
+      organizationId: 'org1',
+    });
 
+    expect(result.message).toContain('Se existir uma conta');
     expect(rateLimit.assertGenerateAllowed).toHaveBeenCalledWith('12345678900');
     expect(userRepository.update).toHaveBeenCalledWith(
       'u1',
@@ -56,5 +60,20 @@ describe('CreateRecoveryGenerateCodeService', () => {
         code: expect.stringMatching(/^\d{6}$/),
       }),
     );
+  });
+
+  it('returns soft success and burns generate throttle when user is missing', async () => {
+    userRepository.findByEmail.mockResolvedValue(null);
+
+    const result = await service.execute({ email: 'Missing@B.com' });
+
+    expect(result).toEqual({
+      message: expect.stringContaining('Se existir uma conta'),
+    });
+    expect(rateLimit.assertGenerateAllowed).toHaveBeenCalledWith(
+      'missing@b.com',
+    );
+    expect(userRepository.update).not.toHaveBeenCalled();
+    expect(otpDelivery.deliver).not.toHaveBeenCalled();
   });
 });

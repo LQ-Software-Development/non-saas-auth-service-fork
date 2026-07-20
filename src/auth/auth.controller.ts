@@ -1,4 +1,14 @@
-import { Body, Controller, Post, Put, Query, Request, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  Put,
+  Query,
+  Request,
+  UseGuards,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
 import {
   RefreshTokenDto,
   RefreshTokenInfoService,
@@ -27,7 +37,12 @@ export class AuthController {
     private readonly loginUserService: LoginUserService,
   ) {}
 
+  /**
+   * Breaking change: refresh requires body `{ refreshToken }` (opaque token from login).
+   * Authorization Bearer access JWT is not accepted as a refresh credential.
+   */
   @Post('auth/refresh-token-info')
+  @UsePipes(new ValidationPipe({ whitelist: true }))
   async refreshTokenInfo(
     @Body() body: RefreshTokenDto,
     @Query('withMetadata') withMetadata: string,

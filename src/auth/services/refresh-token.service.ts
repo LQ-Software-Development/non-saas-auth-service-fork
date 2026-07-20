@@ -9,7 +9,39 @@ import { Model } from 'mongoose';
 import { User } from '../database/providers/schema/user.schema';
 
 const BCRYPT_COST = 12;
-const REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const DEFAULT_REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+export const JWT_ACCESS_EXPIRES_IN =
+  process.env.JWT_ACCESS_EXPIRES_IN || '15m';
+export const JWT_REFRESH_EXPIRES_IN =
+  process.env.JWT_REFRESH_EXPIRES_IN || '90d';
+
+export function parseExpiresInToMs(value: string | undefined): number {
+  if (!value?.trim()) {
+    return DEFAULT_REFRESH_TTL_MS;
+  }
+  const match = /^(\d+)\s*([dhms])$/i.exec(value.trim());
+  if (!match) {
+    return DEFAULT_REFRESH_TTL_MS;
+  }
+  const amount = parseInt(match[1], 10);
+  const unit = match[2].toLowerCase();
+  if (unit === 'd') {
+    return amount * 24 * 60 * 60 * 1000;
+  }
+  if (unit === 'h') {
+    return amount * 60 * 60 * 1000;
+  }
+  if (unit === 'm') {
+    return amount * 60 * 1000;
+  }
+  if (unit === 's') {
+    return amount * 1000;
+  }
+  return DEFAULT_REFRESH_TTL_MS;
+}
+
+const REFRESH_TTL_MS = parseExpiresInToMs(JWT_REFRESH_EXPIRES_IN);
 
 type UserMetadata = Record<string, unknown>;
 
@@ -32,11 +64,17 @@ export class RefreshTokenService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
+    const previousLookup = (user.metadata as UserMetadata | undefined)
+      ?.refreshTokenLookup as string | undefined;
+
     const metadata: UserMetadata = {
       ...(user.metadata ?? {}),
       refreshTokenHash,
       refreshTokenExpiresAt,
       refreshTokenLookup,
+      ...(previousLookup
+        ? { previousRefreshTokenLookup: previousLookup }
+        : {}),
     };
 
     await this.userModel.findByIdAndUpdate(userId, { metadata }).exec();
@@ -61,17 +99,27 @@ export class RefreshTokenService {
     const storedHash = metadata.refreshTokenHash as string | undefined;
     const expiresAt = metadata.refreshTokenExpiresAt as number | undefined;
     const lookup = metadata.refreshTokenLookup as string | undefined;
+    const previousLookup = metadata.previousRefreshTokenLookup as
+      | string
+      | undefined;
+    const presentedLookup = sha256(presentedToken);
+
+    if (previousLookup && previousLookup === presentedLookup) {
+      await this.clearRefreshMetadata(userId, metadata);
+      throw new UnauthorizedException('Invalid refresh token');
+    }
 
     if (!storedHash || !expiresAt || Date.now() >= expiresAt) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    if (lookup && lookup !== sha256(presentedToken)) {
+    if (!lookup || lookup !== presentedLookup) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
     const valid = await bcrypt.compare(parsed.secret, storedHash);
     if (!valid) {
+      await this.clearRefreshMetadata(userId, metadata);
       throw new UnauthorizedException('Invalid refresh token');
     }
 
@@ -89,12 +137,34 @@ export class RefreshTokenService {
       .findOne({ 'metadata.refreshTokenLookup': lookup })
       .exec();
 
-    if (user) {
-      return user.id || user._id.toString();
+    if (!user) {
+      // One-step reuse: presented token matches a rotated (previous) lookup
+      const reused = await this.userModel
+        .findOne({ 'metadata.previousRefreshTokenLookup': lookup })
+        .exec();
+      if (reused) {
+        const userId = reused.id || reused._id.toString();
+        await this.clearRefreshMetadata(
+          userId,
+          (reused.metadata ?? {}) as UserMetadata,
+        );
+      }
+      throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Fallback: trust userId prefix and verify hash in rotate
-    return parsed.userId;
+    return user.id || user._id.toString();
+  }
+
+  private async clearRefreshMetadata(
+    userId: string,
+    current: UserMetadata,
+  ): Promise<void> {
+    const metadata: UserMetadata = { ...current };
+    delete metadata.refreshTokenHash;
+    delete metadata.refreshTokenExpiresAt;
+    delete metadata.refreshTokenLookup;
+    delete metadata.previousRefreshTokenLookup;
+    await this.userModel.findByIdAndUpdate(userId, { metadata }).exec();
   }
 }
 
@@ -116,8 +186,3 @@ export function parseOpaqueRefreshToken(
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
-
-export const JWT_ACCESS_EXPIRES_IN =
-  process.env.JWT_ACCESS_EXPIRES_IN || '15m';
-export const JWT_REFRESH_EXPIRES_IN =
-  process.env.JWT_REFRESH_EXPIRES_IN || '90d';

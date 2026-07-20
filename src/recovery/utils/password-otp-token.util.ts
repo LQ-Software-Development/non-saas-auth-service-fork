@@ -11,6 +11,7 @@ export type ParsedPasswordOtpToken = {
 
 export type ParsedVerifiedMarker = {
   verified: true;
+  proofHash: string;
   expiresAt: number;
 };
 
@@ -47,18 +48,23 @@ export function parseVerifiedMarker(
     return null;
   }
   const parts = stored.trim().split('|');
-  if (parts.length !== 2 || parts[0] !== VERIFIED_MARKER) {
+  // verified|<bcryptHashOfProof>|<expiresAt>
+  if (parts.length !== 3 || parts[0] !== VERIFIED_MARKER) {
     return null;
   }
-  const expiresAt = parseInt(parts[1], 10);
-  if (!Number.isFinite(expiresAt)) {
+  const proofHash = parts[1];
+  const expiresAt = parseInt(parts[2], 10);
+  if (!proofHash.startsWith('$2') || !Number.isFinite(expiresAt)) {
     return null;
   }
-  return { verified: true, expiresAt };
+  return { verified: true, proofHash, expiresAt };
 }
 
-export function buildVerifiedMarker(expiresAt: number): string {
-  return `${VERIFIED_MARKER}|${expiresAt}`;
+export function buildVerifiedMarker(
+  proofHash: string,
+  expiresAt: number,
+): string {
+  return `${VERIFIED_MARKER}|${proofHash}|${expiresAt}`;
 }
 
 export function isOtpExpired(expiresAt: number, now = Date.now()): boolean {

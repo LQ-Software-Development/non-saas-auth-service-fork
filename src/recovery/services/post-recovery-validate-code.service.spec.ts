@@ -5,6 +5,7 @@ import {
   CODE_TTL_MS,
   parseVerifiedMarker,
 } from '../utils/password-otp-token.util';
+import * as bcrypt from 'bcrypt';
 
 describe('PostRecoveryValidateCodeService', () => {
   const userRepository = {
@@ -27,7 +28,7 @@ describe('PostRecoveryValidateCodeService', () => {
     );
   });
 
-  it('accepts valid code, marks verified (single-use), clears failures', async () => {
+  it('accepts valid code, stores proof hash marker, returns resetToken', async () => {
     const expiresAt = Date.now() + CODE_TTL_MS;
     const passwordToken = await buildPasswordOtpToken('654321', expiresAt);
     userRepository.findByEmail.mockResolvedValue({
@@ -43,7 +44,8 @@ describe('PostRecoveryValidateCodeService', () => {
       token: '654321',
     });
 
-    expect(result).toEqual({ success: true });
+    expect(result.success).toBe(true);
+    expect(result.resetToken).toEqual(expect.stringMatching(/^[a-f0-9]{64}$/));
     expect(userRepository.update).toHaveBeenCalledWith(
       'u1',
       expect.objectContaining({
@@ -51,7 +53,10 @@ describe('PostRecoveryValidateCodeService', () => {
       }),
     );
     const stored = userRepository.update.mock.calls[0][1].passwordToken;
-    expect(parseVerifiedMarker(stored)?.expiresAt).toBe(expiresAt);
+    const parsed = parseVerifiedMarker(stored);
+    expect(parsed?.expiresAt).toBe(expiresAt);
+    expect(parsed?.proofHash.startsWith('$2')).toBe(true);
+    expect(await bcrypt.compare(result.resetToken, parsed.proofHash)).toBe(true);
     expect(rateLimit.clearValidateFailures).toHaveBeenCalled();
   });
 
@@ -87,5 +92,16 @@ describe('PostRecoveryValidateCodeService', () => {
       service.execute({ email: 'a@b.com', token: '654321' }),
     ).rejects.toBeInstanceOf(UnauthorizedException);
     expect(rateLimit.registerValidateFailure).toHaveBeenCalled();
+  });
+
+  it('uses generic message when user is missing', async () => {
+    userRepository.findByEmail.mockResolvedValue(null);
+
+    await expect(
+      service.execute({ email: 'missing@b.com', token: '654321' }),
+    ).rejects.toThrow('Código inválido');
+    expect(rateLimit.assertValidateAllowed).toHaveBeenCalledWith(
+      'missing@b.com',
+    );
   });
 });

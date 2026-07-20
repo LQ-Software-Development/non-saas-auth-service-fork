@@ -33,12 +33,14 @@ describe('password-otp-token.util', () => {
     expect(isOtpExpired(Date.now() + 60_000)).toBe(false);
   });
 
-  it('builds and parses verified marker', () => {
+  it('builds and parses verified marker with proof hash', async () => {
     const expiresAt = Date.now() + CODE_TTL_MS;
-    const marker = buildVerifiedMarker(expiresAt);
+    const proofHash = await bcrypt.hash('reset-proof', 12);
+    const marker = buildVerifiedMarker(proofHash, expiresAt);
     const parsed = parseVerifiedMarker(marker);
-    expect(parsed).toEqual({ verified: true, expiresAt });
+    expect(parsed).toEqual({ verified: true, proofHash, expiresAt });
     expect(parsePasswordOtpToken(marker)).toBeNull();
+    expect(parseVerifiedMarker(`verified|${expiresAt}`)).toBeNull();
   });
 
   it('resolves throttle key preferring document digits', () => {

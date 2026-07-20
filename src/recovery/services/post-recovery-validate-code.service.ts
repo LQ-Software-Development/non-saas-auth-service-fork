@@ -1,8 +1,10 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { UserRepositoryInterface } from '../../auth/repositories/user.repository.interface';
 import { ValidateCodeDto } from '../dto/validate-code.dto';
 import {
+  BCRYPT_COST,
   buildVerifiedMarker,
   isOtpExpired,
   parsePasswordOtpToken,
@@ -14,6 +16,8 @@ import {
   OtpRateLimitService,
 } from './otp-rate-limit.service';
 
+const INVALID_CODE_MESSAGE = 'Código inválido';
+
 @Injectable()
 export class PostRecoveryValidateCodeService {
   constructor(
@@ -24,9 +28,12 @@ export class PostRecoveryValidateCodeService {
   ) {}
 
   async execute(validateCodeDto: ValidateCodeDto) {
+    const emailKey = validateCodeDto.email.trim().toLowerCase();
     const user = await this.userRepository.findByEmail(validateCodeDto.email);
     if (!user) {
-      throw new UnauthorizedException('Usuário não encontrado');
+      await this.rateLimit.assertValidateAllowed(emailKey);
+      await this.rateLimit.registerValidateFailure(emailKey);
+      throw new UnauthorizedException(INVALID_CODE_MESSAGE);
     }
 
     const throttleKey = resolveOtpThrottleKey(user);
@@ -35,7 +42,7 @@ export class PostRecoveryValidateCodeService {
     const parsed = parsePasswordOtpToken(user.passwordToken);
     if (!parsed || isOtpExpired(parsed.expiresAt)) {
       await this.rateLimit.registerValidateFailure(throttleKey);
-      throw new UnauthorizedException('Token inválido');
+      throw new UnauthorizedException(INVALID_CODE_MESSAGE);
     }
 
     const codeValid = await bcrypt.compare(
@@ -44,15 +51,17 @@ export class PostRecoveryValidateCodeService {
     );
     if (!codeValid) {
       await this.rateLimit.registerValidateFailure(throttleKey);
-      throw new UnauthorizedException('Token inválido');
+      throw new UnauthorizedException(INVALID_CODE_MESSAGE);
     }
 
+    const resetProof = randomBytes(32).toString('hex');
+    const proofHash = await bcrypt.hash(resetProof, BCRYPT_COST);
     const userId = resolveUserId(user as { _id?: { toString(): string }; id?: string });
     await this.userRepository.update(userId, {
-      passwordToken: buildVerifiedMarker(parsed.expiresAt),
+      passwordToken: buildVerifiedMarker(proofHash, parsed.expiresAt),
     });
     await this.rateLimit.clearValidateFailures(throttleKey);
 
-    return { success: true };
+    return { success: true, resetToken: resetProof };
   }
 }
