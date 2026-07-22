@@ -32,13 +32,11 @@ import {
 } from 'src/organizations/entities/organization.schema';
 import { AuthController } from './auth.controller';
 import { RefreshTokenInfoService } from './services/refresh-token-info.service';
-import {
-  JWT_ACCESS_EXPIRES_IN,
-  RefreshTokenService,
-} from './services/refresh-token.service';
+import { RefreshTokenService } from './services/refresh-token.service';
 import { ResendEmailVerificationService } from './services/resend-email-verification.service';
 import { AuthV2Controller } from './auth-v2.controller';
 import { LoginWithoutMetadataService } from './services/login-without-metadata.service';
+import { RefreshTokenInfoGuard } from './guards/refresh-token-info.guard';
 
 @Module({
   imports: [
@@ -78,6 +76,7 @@ import { LoginWithoutMetadataService } from './services/login-without-metadata.s
     ResendEmailVerificationService,
     RefreshTokenInfoService,
     RefreshTokenService,
+    RefreshTokenInfoGuard,
     LoginWithoutMetadataService,
     {
       provide: 'user-repository',
@@ -86,9 +85,10 @@ import { LoginWithoutMetadataService } from './services/login-without-metadata.s
     {
       provide: 'jwt-service',
       useFactory: () => {
+        // Default 90d for login/legacy refresh; opaque refresh overrides to 15m.
         return new JwtService({
           secret: process.env.JWT_SECRET,
-          signOptions: { expiresIn: JWT_ACCESS_EXPIRES_IN },
+          signOptions: { expiresIn: '90d' },
         });
       },
     },

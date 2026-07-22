@@ -5,6 +5,7 @@ import {
   Put,
   Query,
   Request,
+  UnauthorizedException,
   UseGuards,
   UsePipes,
   ValidationPipe,
@@ -14,6 +15,7 @@ import {
   RefreshTokenInfoService,
 } from './services/refresh-token-info.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RefreshTokenInfoGuard } from './guards/refresh-token-info.guard';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -38,19 +40,35 @@ export class AuthV2Controller {
   ) {}
 
   /**
-   * Breaking change: refresh requires body `{ refreshToken }` (opaque token from login).
-   * Authorization Bearer access JWT is not accepted as a refresh credential.
+   * Dual-mode (compatibilidade reversa):
+   * - body `{ refreshToken }` → fluxo opaco (15m access + rotação)
+   * - Bearer JWT sem body → legado (90d access, sem rotação)
    */
+  @UseGuards(RefreshTokenInfoGuard)
   @Post('refresh-token-info')
-  @UsePipes(new ValidationPipe({ whitelist: true }))
+  @UsePipes(
+    new ValidationPipe({
+      whitelist: true,
+      skipMissingProperties: true,
+      forbidNonWhitelisted: false,
+    }),
+  )
   async refreshTokenInfo(
-    @Body() body: RefreshTokenDto,
+    @Body() body: RefreshTokenDto | undefined,
     @Query('withMetadata') withMetadata: string,
+    @Request() req: { user?: { sub: string } },
   ) {
-    return this.refreshTokenInfoService.execute(
-      body.refreshToken,
-      withMetadata !== 'false',
-    );
+    const wm = withMetadata !== 'false';
+    if (body?.refreshToken) {
+      return this.refreshTokenInfoService.executeByRefreshToken(
+        body.refreshToken,
+        wm,
+      );
+    }
+    if (!req.user?.sub) {
+      throw new UnauthorizedException();
+    }
+    return this.refreshTokenInfoService.executeLegacy(req.user.sub, wm);
   }
 
   @UseGuards(JwtAuthGuard)

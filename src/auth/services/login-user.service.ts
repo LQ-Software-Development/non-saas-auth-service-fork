@@ -9,10 +9,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Participant } from '../../organizations/participants/entities/participant.entity';
 import { Organization } from '../../organizations/entities/organization.schema';
-import {
-  JWT_ACCESS_EXPIRES_IN,
-  RefreshTokenService,
-} from './refresh-token.service';
+import { RefreshTokenService } from './refresh-token.service';
 
 // Interface for the successful login payload
 interface LoginSuccessPayload {
@@ -72,24 +69,23 @@ export class LoginUserService {
         identifierValue,
       );
 
-      const token = this.jwtService.sign(
-        {
-          sub: idString,
-          accesses: accesses.map((access) => ({
-            ...access,
-            metadata: data.noMetadataOnToken ? undefined : access.metadata,
-            accessMetadata: data.noMetadataOnToken
-              ? undefined
-              : access.accessMetadata,
-          })),
-          name: user.name,
-          email: user.email,
-          verifiedEmail: user.verifiedEmail,
-          document: user.document,
-          phone: user.phone,
-        },
-        { expiresIn: JWT_ACCESS_EXPIRES_IN },
-      );
+      // Default do jwt-service (90d) — clientes legados não quebram.
+      // refreshToken opaco é aditivo para migração incremental.
+      const token = this.jwtService.sign({
+        sub: idString,
+        accesses: accesses.map((access) => ({
+          ...access,
+          metadata: data.noMetadataOnToken ? undefined : access.metadata,
+          accessMetadata: data.noMetadataOnToken
+            ? undefined
+            : access.accessMetadata,
+        })),
+        name: user.name,
+        email: user.email,
+        verifiedEmail: user.verifiedEmail,
+        document: user.document,
+        phone: user.phone,
+      });
 
       const refreshToken =
         await this.refreshTokenService.issueRefreshToken(idString);

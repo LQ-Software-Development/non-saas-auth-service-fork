@@ -6,10 +6,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { User } from '../database/providers/schema/user.schema';
 import { Model } from 'mongoose';
 import { Inject, NotFoundException } from '@nestjs/common';
-import {
-  JWT_ACCESS_EXPIRES_IN,
-  RefreshTokenService,
-} from './refresh-token.service';
+import { RefreshTokenService } from './refresh-token.service';
 
 export class LoginWithoutMetadataService {
   constructor(
@@ -44,14 +41,12 @@ export class LoginWithoutMetadataService {
 
     const userId = user._id.toString();
 
-    const token = this.jwtService.sign(
-      {
-        sub: user._id,
-        id: user._id,
-        _id: user._id,
-      },
-      { expiresIn: JWT_ACCESS_EXPIRES_IN },
-    );
+    // Default do jwt-service (90d) — clientes legados não quebram.
+    const token = this.jwtService.sign({
+      sub: user._id,
+      id: user._id,
+      _id: user._id,
+    });
 
     const refreshToken =
       await this.refreshTokenService.issueRefreshToken(userId);
