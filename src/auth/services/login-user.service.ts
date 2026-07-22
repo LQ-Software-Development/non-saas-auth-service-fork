@@ -1,7 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-// RepositoryInterface is not used, maybe remove later if not needed elsewhere implicitly
-// import { UserRepositoryInterface } from '../../../repositories/user.repository.interface';
 import { LoginUserDto } from '../dto/login-user.dto';
 import { Result } from '../../core/application/result';
 import { ForbiddenException, InternalServerErrorException } from '@nestjs/common';
@@ -11,10 +9,12 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Participant } from '../../organizations/participants/entities/participant.entity';
 import { Organization } from '../../organizations/entities/organization.schema';
+import { RefreshTokenService } from './refresh-token.service';
 
 // Interface for the successful login payload
 interface LoginSuccessPayload {
   token: string;
+  refreshToken: string;
   userId: string;
   name: string;
   verifiedEmail: boolean;
@@ -47,8 +47,6 @@ interface FoundUserResult {
 @Injectable()
 export class LoginUserService {
   constructor(
-    // @Inject('user-repository')
-    // private readonly userRepository: UserRepositoryInterface, // Not directly used after refactor
     @Inject('jwt-service') private readonly jwtService: JwtService,
     @InjectModel(User.name)
     private readonly userModel: Model<User>,
@@ -56,6 +54,7 @@ export class LoginUserService {
     private readonly participantModel: Model<Participant>,
     @InjectModel(Organization.name)
     private readonly organizationModel: Model<Organization>,
+    private readonly refreshTokenService: RefreshTokenService,
   ) { }
 
   async login(data: LoginUserDto): Promise<Result<LoginSuccessPayload>> {
@@ -70,12 +69,16 @@ export class LoginUserService {
         identifierValue,
       );
 
+      // Default do jwt-service (90d) — clientes legados não quebram.
+      // refreshToken opaco é aditivo para migração incremental.
       const token = this.jwtService.sign({
         sub: idString,
         accesses: accesses.map((access) => ({
           ...access,
           metadata: data.noMetadataOnToken ? undefined : access.metadata,
-          accessMetadata: data.noMetadataOnToken ? undefined : access.accessMetadata,
+          accessMetadata: data.noMetadataOnToken
+            ? undefined
+            : access.accessMetadata,
         })),
         name: user.name,
         email: user.email,
@@ -84,6 +87,9 @@ export class LoginUserService {
         phone: user.phone,
       });
 
+      const refreshToken =
+        await this.refreshTokenService.issueRefreshToken(idString);
+
       return Result.ok({
         name: user.name,
         userId: idString,
@@ -91,6 +97,7 @@ export class LoginUserService {
         phone: user.phone,
         document: user.document,
         token,
+        refreshToken,
         accesses: accesses,
       });
     } catch (error) {

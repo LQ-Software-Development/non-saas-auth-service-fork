@@ -1,5 +1,6 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { randomInt } from 'crypto';
 
 import * as bcrypt from 'bcrypt';
 
@@ -45,7 +46,7 @@ export class RegisterUserUseCase {
 
     const passwordHash = bcrypt.hashSync(data.password, 10);
 
-    const emailToken = Math.floor(100000 + Math.random() * 900000).toString();
+    const emailToken = randomInt(100000, 1000000).toString();
 
     const user = await this.userRepository.create({
       ...data,

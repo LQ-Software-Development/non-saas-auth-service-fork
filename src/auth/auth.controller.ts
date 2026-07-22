@@ -1,6 +1,21 @@
-import { Body, Controller, Post, Put, Query, Request, UseGuards } from '@nestjs/common';
-import { RefreshTokenInfoService } from './services/refresh-token-info.service';
+import {
+  Body,
+  Controller,
+  Post,
+  Put,
+  Query,
+  Request,
+  UnauthorizedException,
+  UseGuards,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
+import {
+  RefreshTokenDto,
+  RefreshTokenInfoService,
+} from './services/refresh-token-info.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RefreshTokenInfoGuard } from './guards/refresh-token-info.guard';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -22,17 +37,43 @@ export class AuthController {
     private readonly refreshTokenInfoService: RefreshTokenInfoService,
     private readonly resendEmailVerificationService: ResendEmailVerificationService,
     private readonly loginUserService: LoginUserService,
-  ) { }
+  ) {}
 
-  @UseGuards(JwtAuthGuard)
+  /**
+   * Dual-mode (compatibilidade reversa):
+   * - body `{ refreshToken }` → fluxo opaco (15m access + rotação)
+   * - Bearer JWT sem body → legado (90d access, sem rotação)
+   */
+  @UseGuards(RefreshTokenInfoGuard)
   @Post('auth/refresh-token-info')
-  async refreshTokenInfo(@Request() req: any, @Query('withMetadata') withMetadata: string) {
-    return this.refreshTokenInfoService.execute(req.user.sub, withMetadata !== 'false');
+  @UsePipes(
+    new ValidationPipe({
+      whitelist: true,
+      skipMissingProperties: true,
+      forbidNonWhitelisted: false,
+    }),
+  )
+  async refreshTokenInfo(
+    @Body() body: RefreshTokenDto | undefined,
+    @Query('withMetadata') withMetadata: string,
+    @Request() req: { user?: { sub: string } },
+  ) {
+    const wm = withMetadata !== 'false';
+    if (body?.refreshToken) {
+      return this.refreshTokenInfoService.executeByRefreshToken(
+        body.refreshToken,
+        wm,
+      );
+    }
+    if (!req.user?.sub) {
+      throw new UnauthorizedException();
+    }
+    return this.refreshTokenInfoService.executeLegacy(req.user.sub, wm);
   }
 
   @UseGuards(JwtAuthGuard)
   @Put('auth/email-verification')
-  async resendEmailVerification(@Request() req: any) {
+  async resendEmailVerification(@Request() req: { user: { sub: string } }) {
     return this.resendEmailVerificationService.execute(req.user.sub);
   }
 

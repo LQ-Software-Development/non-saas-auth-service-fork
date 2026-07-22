@@ -1,5 +1,6 @@
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { randomInt } from 'crypto';
 
 import { User } from '../database/providers/schema/user.schema';
 import { Injectable, NotFoundException } from '@nestjs/common';
@@ -20,7 +21,7 @@ export class ResendEmailVerificationService {
       throw new NotFoundException('User not found');
     }
 
-    const emailToken = Math.floor(100000 + Math.random() * 900000).toString();
+    const emailToken = randomInt(100000, 1000000).toString();
 
     user.emailToken = emailToken;
 

@@ -23,6 +23,7 @@ import { ClientsModule, Transport } from '@nestjs/microservices';
     JwtModule.register({
       global: true,
       secret: process.env.JWT_SECRET,
+      // Default 90d preserves legacy clients. Opaque refresh path overrides to 15m.
       signOptions: { expiresIn: '90d' },
     }),
     EventEmitterModule.forRoot(),
