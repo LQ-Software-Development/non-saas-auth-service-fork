@@ -32,19 +32,21 @@ describe('OtpRateLimitService', () => {
   });
 
   describe('assertValidateAllowed', () => {
-    it('allows up to 3 validate requests per hour', async () => {
-      await expect(service.assertValidateAllowed('abc')).resolves.toBeUndefined();
-      await expect(service.assertValidateAllowed('abc')).resolves.toBeUndefined();
-      await expect(service.assertValidateAllowed('abc')).resolves.toBeUndefined();
+    it('allows more than 5 validate requests so lockout can fire', async () => {
+      for (let i = 0; i < 5; i++) {
+        await expect(
+          service.assertValidateAllowed('abc'),
+        ).resolves.toBeUndefined();
+      }
     });
 
-    it('throws 429 on the 4th validate request within the window', async () => {
-      await service.assertValidateAllowed('abc');
-      await service.assertValidateAllowed('abc');
-      await service.assertValidateAllowed('abc');
-      await expect(service.assertValidateAllowed('abc')).rejects.toBeInstanceOf(
-        LockoutException,
-      );
+    it('throws 429 after validate window is exceeded', async () => {
+      for (let i = 0; i < 10; i++) {
+        await service.assertValidateAllowed('window');
+      }
+      await expect(
+        service.assertValidateAllowed('window'),
+      ).rejects.toBeInstanceOf(LockoutException);
     });
 
     it('throws 429 when lockout key is present', async () => {
@@ -81,7 +83,7 @@ describe('OtpRateLimitService', () => {
 
   describe('fail closed', () => {
     it('throws 503 when Redis operations fail', async () => {
-      const broken: any = {
+      const broken = {
         incr: jest.fn().mockRejectedValue(new Error('connection refused')),
         expire: jest.fn(),
         get: jest.fn(),

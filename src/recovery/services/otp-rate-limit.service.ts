@@ -11,7 +11,14 @@ export const OTP_REDIS_CLIENT = 'otp-redis-client';
 export const OTP_RATE_LIMIT = 'OTP_RATE_LIMIT';
 
 const WINDOW_SECONDS = 60 * 60;
-const MAX_REQUESTS_PER_WINDOW = 3;
+/** Tech Spec §7: ≤3 generate requests/hour per document. */
+const MAX_GENERATE_PER_WINDOW = 3;
+/**
+ * Validate/change-password sliding window.
+ * Kept ≥ FAIL_MAX so the 5-failure / 15min lockout remains reachable
+ * (a hard cap of 3 would make lockout dead code).
+ */
+const MAX_VALIDATE_PER_WINDOW = 10;
 const MAX_FAILURES = 5;
 const LOCKOUT_SECONDS = 15 * 60;
 const FAILURE_TTL_SECONDS = 60 * 60;
@@ -178,13 +185,14 @@ export class OtpRateLimitService {
 
   private async assertThrottle(
     redisKey: string,
+    maxPerWindow: number,
     errorMessage: string,
   ): Promise<void> {
     const count = await this.redis.incr(redisKey);
     if (count === 1) {
       await this.redis.expire(redisKey, WINDOW_SECONDS);
     }
-    if (count > MAX_REQUESTS_PER_WINDOW) {
+    if (count > maxPerWindow) {
       throw new LockoutException(errorMessage);
     }
   }
@@ -193,6 +201,7 @@ export class OtpRateLimitService {
     await this.withRedis(async () => {
       await this.assertThrottle(
         this.genKey(key),
+        MAX_GENERATE_PER_WINDOW,
         'Limite de geração de código excedido. Tente novamente em até 1 hora.',
       );
     });
@@ -208,6 +217,7 @@ export class OtpRateLimitService {
       }
       await this.assertThrottle(
         this.valKey(key),
+        MAX_VALIDATE_PER_WINDOW,
         'Limite de validação de código excedido. Tente novamente em até 1 hora.',
       );
     });

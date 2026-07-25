@@ -1,7 +1,7 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { UpdateRecoveryDto } from '../dto/update-recovery.dto';
 import { UserRepositoryInterface } from '../../auth/repositories/user.repository.interface';
-import * as bcrypt from 'bcrypt';
 import { LockoutException } from '../exceptions/lockout.exception';
 import {
   OtpRateLimitService,
@@ -10,6 +10,7 @@ import {
 import {
   BCRYPT_COST,
   isExpired,
+  parseVerifiedMarker,
   resolveThrottleKey,
   resolveUserId,
   verifyOtp,
@@ -17,6 +18,16 @@ import {
 
 const LOCKOUT_MS = 15 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
+
+type UserOtpRecord = {
+  _id?: string | { toString(): string };
+  id?: string;
+  passwordToken?: string | null;
+  passwordTokenHash?: string | null;
+  passwordTokenExpiresAt?: Date | null;
+  otpAttempts?: number;
+  otpBlockedUntil?: Date | null;
+};
 
 @Injectable()
 export class UpdatePasswordWithCodeService {
@@ -42,7 +53,8 @@ export class UpdatePasswordWithCodeService {
       throw new UnauthorizedException('Token inválido');
     }
 
-    const userRecord = user as any;
+    const userRecord = user as UserOtpRecord;
+
     if (
       userRecord.otpBlockedUntil &&
       new Date(userRecord.otpBlockedUntil).getTime() > Date.now()
@@ -53,9 +65,7 @@ export class UpdatePasswordWithCodeService {
     }
 
     const userId = resolveUserId(userRecord);
-    const valid =
-      !isExpired(userRecord.passwordTokenExpiresAt) &&
-      (await verifyOtp(token, userRecord.passwordTokenHash));
+    const valid = await this.isChangeAllowed(userRecord, token);
 
     if (!valid) {
       const attempts = (userRecord.otpAttempts || 0) + 1;
@@ -63,7 +73,7 @@ export class UpdatePasswordWithCodeService {
       if (attempts >= MAX_OTP_ATTEMPTS) {
         update.otpBlockedUntil = new Date(Date.now() + LOCKOUT_MS);
       }
-      await this.userRepository.update(userId, update as any);
+      await this.userRepository.update(userId, update);
       await this.otpRateLimit.registerValidateFailure(throttleKey);
       throw new UnauthorizedException('Token inválido');
     }
@@ -77,9 +87,27 @@ export class UpdatePasswordWithCodeService {
       passwordTokenExpiresAt: null,
       otpAttempts: 0,
       otpBlockedUntil: null,
-    } as any);
+    });
     await this.otpRateLimit.clearValidateFailures(throttleKey);
 
     return { success: true, message: 'Senha atualizada com sucesso' };
+  }
+
+  private async isChangeAllowed(
+    userRecord: UserOtpRecord,
+    presentedToken: string,
+  ): Promise<boolean> {
+    const verified = parseVerifiedMarker(userRecord.passwordToken);
+    if (verified) {
+      if (Date.now() >= verified.expiresAtMs) {
+        return false;
+      }
+      return verifyOtp(presentedToken, verified.proofHash);
+    }
+
+    return (
+      !isExpired(userRecord.passwordTokenExpiresAt) &&
+      (await verifyOtp(presentedToken, userRecord.passwordTokenHash))
+    );
   }
 }

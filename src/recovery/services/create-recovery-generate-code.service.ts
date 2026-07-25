@@ -42,7 +42,9 @@ export class CreateRecoveryGenerateCodeService {
     const token = randomInt(100000, 1000000).toString();
     const passwordTokenHash = await hashOtp(token);
     const passwordTokenExpiresAt = new Date(Date.now() + CODE_TTL_MS);
-    const userId = resolveUserId(user as any);
+    const userId = resolveUserId(
+      user as { _id?: string | { toString(): string }; id?: string },
+    );
 
     await this.userRepository.update(userId, {
       passwordToken: null,
@@ -50,7 +52,7 @@ export class CreateRecoveryGenerateCodeService {
       passwordTokenExpiresAt,
       otpAttempts: 0,
       otpBlockedUntil: null,
-    } as any);
+    });
 
     const emailPayload = {
       data: {

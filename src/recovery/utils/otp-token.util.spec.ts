@@ -1,8 +1,10 @@
 import {
   BCRYPT_COST,
   CODE_TTL_MS,
+  buildVerifiedMarker,
   hashOtp,
   isExpired,
+  parseVerifiedMarker,
   resolveThrottleKey,
   resolveUserId,
   verifyOtp,
@@ -30,6 +32,18 @@ describe('otp-token.util', () => {
 
     it('uses cost factor 10', () => {
       expect(BCRYPT_COST).toBe(10);
+    });
+  });
+
+  describe('verified marker', () => {
+    it('round-trips proof hash and expiry', async () => {
+      const proofHash = await hashOtp('abcdef');
+      const expiresAtMs = Date.now() + CODE_TTL_MS;
+      const marker = buildVerifiedMarker(proofHash, expiresAtMs);
+      const parsed = parseVerifiedMarker(marker);
+      expect(parsed).toEqual({ proofHash, expiresAtMs });
+      expect(parseVerifiedMarker(null)).toBeNull();
+      expect(parseVerifiedMarker('plaintext-otp')).toBeNull();
     });
   });
 

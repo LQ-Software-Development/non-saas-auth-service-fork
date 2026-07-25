@@ -5,7 +5,10 @@ import {
   InMemoryRedisLike,
   OtpRateLimitService,
 } from './otp-rate-limit.service';
-import { hashOtp } from '../utils/otp-token.util';
+import {
+  buildVerifiedMarker,
+  hashOtp,
+} from '../utils/otp-token.util';
 
 describe('UpdatePasswordWithCodeService', () => {
   let userRepository: {
@@ -18,7 +21,16 @@ describe('UpdatePasswordWithCodeService', () => {
 
   const code = '112233';
   const newPassword = 'NewPass@123';
-  let user: any;
+  let user: {
+    _id: string;
+    email: string;
+    document: string;
+    passwordToken?: string | null;
+    passwordTokenHash: string | null;
+    passwordTokenExpiresAt: Date | null;
+    otpAttempts: number;
+    otpBlockedUntil: Date | null;
+  };
 
   beforeEach(async () => {
     userRepository = {
@@ -28,7 +40,7 @@ describe('UpdatePasswordWithCodeService', () => {
     redis = new InMemoryRedisLike();
     otpRateLimit = new OtpRateLimitService(redis);
     service = new UpdatePasswordWithCodeService(
-      userRepository as any,
+      userRepository as never,
       otpRateLimit,
     );
     user = {
@@ -42,7 +54,7 @@ describe('UpdatePasswordWithCodeService', () => {
     };
   });
 
-  it('verifies hash, updates password and clears OTP fields', async () => {
+  it('verifies OTP hash directly (without prior validate)', async () => {
     userRepository.findByEmail.mockResolvedValue(user);
 
     await expect(
@@ -65,6 +77,27 @@ describe('UpdatePasswordWithCodeService', () => {
     await expect(bcrypt.compare(newPassword, payload.password)).resolves.toBe(
       true,
     );
+  });
+
+  it('accepts resetToken after validate exchanged the OTP', async () => {
+    const resetToken = 'a'.repeat(64);
+    const proofHash = await hashOtp(resetToken);
+    const expiresAtMs = Date.now() + 5 * 60 * 1000;
+    user.passwordTokenHash = null;
+    user.passwordToken = buildVerifiedMarker(proofHash, expiresAtMs);
+    user.passwordTokenExpiresAt = new Date(expiresAtMs);
+    userRepository.findByEmail.mockResolvedValue(user);
+
+    await expect(
+      service.execute({
+        email: user.email,
+        token: resetToken,
+        newPassword,
+      }),
+    ).resolves.toEqual({
+      success: true,
+      message: 'Senha atualizada com sucesso',
+    });
   });
 
   it('rejects expired codes', async () => {

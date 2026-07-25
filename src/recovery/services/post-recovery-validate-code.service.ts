@@ -1,4 +1,5 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { UserRepositoryInterface } from '../../auth/repositories/user.repository.interface';
 import { ValidateCodeDto } from '../dto/validate-code.dto';
 import { LockoutException } from '../exceptions/lockout.exception';
@@ -7,6 +8,8 @@ import {
   OTP_RATE_LIMIT,
 } from './otp-rate-limit.service';
 import {
+  buildVerifiedMarker,
+  hashOtp,
   isExpired,
   resolveThrottleKey,
   resolveUserId,
@@ -38,7 +41,15 @@ export class PostRecoveryValidateCodeService {
       throw new UnauthorizedException('Token inválido');
     }
 
-    const userRecord = user as any;
+    const userRecord = user as {
+      _id?: string | { toString(): string };
+      id?: string;
+      passwordTokenHash?: string | null;
+      passwordTokenExpiresAt?: Date | null;
+      otpAttempts?: number;
+      otpBlockedUntil?: Date | null;
+    };
+
     if (
       userRecord.otpBlockedUntil &&
       new Date(userRecord.otpBlockedUntil).getTime() > Date.now()
@@ -59,20 +70,28 @@ export class PostRecoveryValidateCodeService {
       if (attempts >= MAX_OTP_ATTEMPTS) {
         update.otpBlockedUntil = new Date(Date.now() + LOCKOUT_MS);
       }
-      await this.userRepository.update(userId, update as any);
+      await this.userRepository.update(userId, update);
       await this.otpRateLimit.registerValidateFailure(throttleKey);
       throw new UnauthorizedException('Token inválido');
     }
 
+    // Single-use OTP: burn hash and exchange for one-time reset proof.
+    const expiresAt = userRecord.passwordTokenExpiresAt;
+    if (!expiresAt) {
+      throw new UnauthorizedException('Token inválido');
+    }
+    const expiresAtMs = new Date(expiresAt).getTime();
+    const resetToken = randomBytes(32).toString('hex');
+    const proofHash = await hashOtp(resetToken);
     await this.userRepository.update(userId, {
-      passwordToken: null,
+      passwordToken: buildVerifiedMarker(proofHash, expiresAtMs),
       passwordTokenHash: null,
-      passwordTokenExpiresAt: null,
+      passwordTokenExpiresAt: new Date(expiresAtMs),
       otpAttempts: 0,
       otpBlockedUntil: null,
-    } as any);
+    });
     await this.otpRateLimit.clearValidateFailures(throttleKey);
 
-    return { success: true };
+    return { success: true, resetToken };
   }
 }

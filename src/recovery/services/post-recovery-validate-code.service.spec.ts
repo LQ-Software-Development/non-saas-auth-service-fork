@@ -5,7 +5,11 @@ import {
   OtpRateLimitService,
 } from './otp-rate-limit.service';
 import { LockoutException } from '../exceptions/lockout.exception';
-import { hashOtp } from '../utils/otp-token.util';
+import {
+  hashOtp,
+  parseVerifiedMarker,
+  verifyOtp,
+} from '../utils/otp-token.util';
 
 describe('PostRecoveryValidateCodeService', () => {
   let userRepository: {
@@ -17,7 +21,16 @@ describe('PostRecoveryValidateCodeService', () => {
   let service: PostRecoveryValidateCodeService;
 
   const code = '654321';
-  let user: any;
+  let user: {
+    _id: string;
+    email: string;
+    document: string;
+    passwordTokenHash: string | null;
+    passwordToken?: string | null;
+    passwordTokenExpiresAt: Date;
+    otpAttempts: number;
+    otpBlockedUntil: Date | null;
+  };
 
   beforeEach(async () => {
     userRepository = {
@@ -27,7 +40,7 @@ describe('PostRecoveryValidateCodeService', () => {
     redis = new InMemoryRedisLike();
     otpRateLimit = new OtpRateLimitService(redis);
     service = new PostRecoveryValidateCodeService(
-      userRepository as any,
+      userRepository as never,
       otpRateLimit,
     );
     user = {
@@ -41,12 +54,26 @@ describe('PostRecoveryValidateCodeService', () => {
     };
   });
 
-  it('verifies bcrypt hash and returns success', async () => {
+  it('burns OTP hash and returns one-time resetToken', async () => {
     userRepository.findByEmail.mockResolvedValue(user);
 
-    await expect(
-      service.execute({ email: user.email, token: code }),
-    ).resolves.toEqual({ success: true });
+    const result = await service.execute({ email: user.email, token: code });
+
+    expect(result.success).toBe(true);
+    expect(result.resetToken).toEqual(expect.any(String));
+    expect(result.resetToken.length).toBeGreaterThan(20);
+
+    const [, payload] = userRepository.update.mock.calls[0];
+    expect(payload.passwordTokenHash).toBeNull();
+    expect(payload.otpAttempts).toBe(0);
+    const marker = parseVerifiedMarker(payload.passwordToken);
+    expect(marker).not.toBeNull();
+    if (!marker) {
+      throw new Error('expected verified marker');
+    }
+    await expect(verifyOtp(result.resetToken, marker.proofHash)).resolves.toBe(
+      true,
+    );
   });
 
   it('rejects expired codes', async () => {
@@ -68,25 +95,8 @@ describe('PostRecoveryValidateCodeService', () => {
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
-  it('clears hash and tokens on success (single-use)', async () => {
-    userRepository.findByEmail.mockResolvedValue(user);
-
-    await service.execute({ email: user.email, token: code });
-
-    expect(userRepository.update).toHaveBeenCalledWith('user-1', {
-      passwordToken: null,
-      passwordTokenHash: null,
-      passwordTokenExpiresAt: null,
-      otpAttempts: 0,
-      otpBlockedUntil: null,
-    });
-  });
-
   it('increments attempts and locks after 5 failures', async () => {
     userRepository.findByEmail.mockResolvedValue(user);
-    jest
-      .spyOn(otpRateLimit, 'assertValidateAllowed')
-      .mockResolvedValue(undefined);
 
     for (let i = 0; i < 4; i++) {
       user.otpAttempts = i;
