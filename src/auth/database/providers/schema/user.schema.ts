@@ -24,6 +24,18 @@ export class User {
   passwordToken?: string;
 
   @Prop()
+  passwordTokenHash?: string;
+
+  @Prop()
+  passwordTokenExpiresAt?: Date;
+
+  @Prop({ default: 0 })
+  otpAttempts?: number;
+
+  @Prop()
+  otpBlockedUntil?: Date;
+
+  @Prop()
   document: string;
 
   @Prop({ default: now() })
@@ -65,7 +77,11 @@ export interface UserSchemaInterface {
   document: string;
   verifiedEmail: boolean;
   emailToken: string; // token to verify email ex. 123456
-  passwordToken?: string; // token to recover password
+  passwordToken?: string; // token to recover password (legacy plaintext; stop writing)
+  passwordTokenHash?: string;
+  passwordTokenExpiresAt?: Date;
+  otpAttempts?: number;
+  otpBlockedUntil?: Date;
   createdAt: Date;
   updatedAt: Date;
   metadata: Record<string, any>;

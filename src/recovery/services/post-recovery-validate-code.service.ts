@@ -1,28 +1,78 @@
-import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
-import { UserRepositoryInterface } from "src/auth/repositories/user.repository.interface";
-import { ValidateCodeDto } from "../dto/validate-code.dto";
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { UserRepositoryInterface } from '../../auth/repositories/user.repository.interface';
+import { ValidateCodeDto } from '../dto/validate-code.dto';
+import { LockoutException } from '../exceptions/lockout.exception';
+import {
+  OtpRateLimitService,
+  OTP_RATE_LIMIT,
+} from './otp-rate-limit.service';
+import {
+  isExpired,
+  resolveThrottleKey,
+  resolveUserId,
+  verifyOtp,
+} from '../utils/otp-token.util';
+
+const LOCKOUT_MS = 15 * 60 * 1000;
+const MAX_OTP_ATTEMPTS = 5;
 
 @Injectable()
 export class PostRecoveryValidateCodeService {
-    constructor(
-        @Inject('user-repository')
-        private readonly userRepository: UserRepositoryInterface,
-    ) { }
+  constructor(
+    @Inject('user-repository')
+    private readonly userRepository: UserRepositoryInterface,
+    @Inject(OTP_RATE_LIMIT)
+    private readonly otpRateLimit: OtpRateLimitService,
+  ) {}
 
-    async execute(validateCodeDto: ValidateCodeDto) {
-        // Busca usuário pelo e-mail
-        const user = await this.userRepository.findByEmail(validateCodeDto.email);
-        if (!user) {
-            throw new UnauthorizedException('Usuário não encontrado');
-        }
+  async execute(validateCodeDto: ValidateCodeDto) {
+    const user = await this.userRepository.findByEmail(validateCodeDto.email);
+    const throttleKey = user
+      ? resolveThrottleKey(user as { document?: string; email?: string })
+      : resolveThrottleKey({ email: validateCodeDto.email });
 
-        // Compara o token recebido com o salvo no banco
-        const savedToken = (user as any).passwordToken;
-        if (savedToken !== validateCodeDto.token) {
-            throw new UnauthorizedException('Token inválido');
-        }
+    await this.otpRateLimit.assertValidateAllowed(throttleKey);
 
-        // Token válido
-        return { success: true };
+    if (!user) {
+      await this.otpRateLimit.registerValidateFailure(throttleKey);
+      throw new UnauthorizedException('Token inválido');
     }
+
+    const userRecord = user as any;
+    if (
+      userRecord.otpBlockedUntil &&
+      new Date(userRecord.otpBlockedUntil).getTime() > Date.now()
+    ) {
+      throw new LockoutException(
+        'Muitas tentativas inválidas. Tente novamente em 15 minutos.',
+      );
+    }
+
+    const userId = resolveUserId(userRecord);
+    const valid =
+      !isExpired(userRecord.passwordTokenExpiresAt) &&
+      (await verifyOtp(validateCodeDto.token, userRecord.passwordTokenHash));
+
+    if (!valid) {
+      const attempts = (userRecord.otpAttempts || 0) + 1;
+      const update: Record<string, unknown> = { otpAttempts: attempts };
+      if (attempts >= MAX_OTP_ATTEMPTS) {
+        update.otpBlockedUntil = new Date(Date.now() + LOCKOUT_MS);
+      }
+      await this.userRepository.update(userId, update as any);
+      await this.otpRateLimit.registerValidateFailure(throttleKey);
+      throw new UnauthorizedException('Token inválido');
+    }
+
+    await this.userRepository.update(userId, {
+      passwordToken: null,
+      passwordTokenHash: null,
+      passwordTokenExpiresAt: null,
+      otpAttempts: 0,
+      otpBlockedUntil: null,
+    } as any);
+    await this.otpRateLimit.clearValidateFailures(throttleKey);
+
+    return { success: true };
+  }
 }
